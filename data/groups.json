@@ -1,0 +1,9 @@
+{
+  "ai-agents": {
+    "description": "all ai-agents secrets manager",
+    "secrets": [
+      "ai-agent-svc.dev.portpro.io",
+      "ai-agents-temp.dev.portpro.io"
+    ]
+  }
+}

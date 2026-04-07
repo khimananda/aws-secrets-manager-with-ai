@@ -1,0 +1,22 @@
+{
+  "name": "secrets-manager-app",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "mcp": "node mcp-server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "AWS Secrets Manager UI with grouping and MCP support",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@aws-sdk/client-secrets-manager": "^3.1025.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1"
+  }
+}

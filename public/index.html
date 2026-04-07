@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secrets Manager</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    .header h1 { font-size: 20px; font-weight: 600; }
+    .header select, .header input, .header button { padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+    .header button { background: #3b82f6; border-color: #3b82f6; cursor: pointer; font-weight: 500; }
+    .header button:hover { background: #2563eb; }
+    .container { display: flex; height: calc(100vh - 60px); }
+    .sidebar { width: 280px; background: #1e293b; border-right: 1px solid #334155; overflow-y: auto; flex-shrink: 0; }
+    .sidebar-header { padding: 16px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    .sidebar-header h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; }
+    .sidebar-header button { background: none; border: none; color: #3b82f6; cursor: pointer; font-size: 20px; }
+    .group-item { padding: 10px 16px; border-bottom: 1px solid #334155; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .group-item:hover, .group-item.active { background: #334155; }
+    .group-item .name { font-size: 14px; font-weight: 500; }
+    .group-item .count { font-size: 12px; color: #94a3b8; }
+    .group-item .delete-btn { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 16px; opacity: 0; }
+    .group-item:hover .delete-btn { opacity: 1; }
+    .group-item .add-sub-btn { background: none; border: none; color: #3b82f6; cursor: pointer; font-size: 16px; opacity: 0; margin-right: 4px; }
+    .group-item:hover .add-sub-btn { opacity: 1; }
+    .group-expand-btn { background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 11px; margin-right: 6px; flex-shrink: 0; }
+    .subgroup-item { padding: 8px 16px 8px 36px; border-bottom: 1px solid #1e293b; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: #162032; }
+    .subgroup-item:hover, .subgroup-item.active { background: #1e3a5f; }
+    .subgroup-item .name { font-size: 13px; color: #cbd5e1; }
+    .subgroup-item .count { font-size: 11px; color: #64748b; }
+    .subgroup-item .delete-btn { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; opacity: 0; }
+    .subgroup-item:hover .delete-btn { opacity: 1; }
+    .main { flex: 1; overflow-y: auto; padding: 24px; }
+    .toolbar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+    .toolbar button { padding: 8px 16px; border-radius: 6px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; cursor: pointer; font-size: 13px; }
+    .toolbar button.primary { background: #3b82f6; border-color: #3b82f6; }
+    .toolbar button:hover { opacity: 0.85; }
+    .secrets-table { width: 100%; border-collapse: collapse; }
+    .secrets-table th { text-align: left; padding: 10px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; border-bottom: 1px solid #334155; }
+    .secrets-table td { padding: 10px 12px; border-bottom: 1px solid #1e293b; font-size: 14px; }
+    .secrets-table tr:hover { background: #1e293b; }
+    .actions button { background: none; border: none; color: #94a3b8; cursor: pointer; margin-right: 8px; font-size: 13px; }
+    .actions button:hover { color: #e2e8f0; }
+    .actions button.danger:hover { color: #ef4444; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 480px; max-width: 90vw; }
+    .modal h3 { margin-bottom: 16px; font-size: 18px; }
+    .modal label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; margin-top: 12px; }
+    .modal input, .modal textarea { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; font-size: 14px; font-family: inherit; }
+    .modal textarea { height: 100px; resize: vertical; }
+    .modal-actions { margin-top: 20px; display: flex; gap: 12px; justify-content: flex-end; }
+    .modal-actions button { padding: 8px 20px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; }
+    .modal-actions .cancel { background: #475569; color: #e2e8f0; }
+    .modal-actions .submit { background: #3b82f6; color: white; }
+    .modal-actions .submit:hover { background: #2563eb; }
+
+    /* Secret value display */
+    .secret-value-display { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-top: 12px; font-family: monospace; font-size: 13px; word-break: break-all; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+    .toast { position: fixed; bottom: 24px; right: 24px; background: #22c55e; color: white; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 200; display: none; }
+    .toast.error { background: #ef4444; }
+    .toast.visible { display: block; }
+    .empty-state { text-align: center; padding: 60px 20px; color: #64748b; }
+    .empty-state p { margin-top: 8px; }
+
+    /* AI Chat */
+    .chat-fab { position: fixed; bottom: 28px; right: 28px; width: 52px; height: 52px; border-radius: 50%; background: #3b82f6; border: none; color: white; font-size: 22px; cursor: pointer; box-shadow: 0 4px 16px rgba(59,130,246,0.5); z-index: 300; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+    .chat-fab:hover { background: #2563eb; }
+    .chat-panel { position: fixed; bottom: 92px; right: 28px; width: 400px; max-height: 560px; background: #1e293b; border: 1px solid #334155; border-radius: 16px; display: flex; flex-direction: column; z-index: 299; box-shadow: 0 8px 32px rgba(0,0,0,0.4); overflow: hidden; transform: scale(0.95) translateY(10px); opacity: 0; pointer-events: none; transition: transform 0.18s ease, opacity 0.18s ease; }
+    .chat-panel.open { transform: scale(1) translateY(0); opacity: 1; pointer-events: all; }
+    .chat-panel-header { padding: 14px 16px; border-bottom: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; }
+    .chat-panel-header h4 { font-size: 14px; font-weight: 600; color: #f1f5f9; display: flex; align-items: center; gap: 8px; }
+    .chat-panel-header .ai-badge { font-size: 10px; background: #1d4ed8; color: #93c5fd; padding: 2px 7px; border-radius: 10px; font-weight: 600; letter-spacing: 0.04em; }
+    .chat-panel-header button { background: none; border: none; color: #64748b; cursor: pointer; font-size: 18px; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .chat-msg { max-width: 88%; font-size: 13px; line-height: 1.5; }
+    .chat-msg.user { align-self: flex-end; background: #1d4ed8; color: #e0f2fe; padding: 8px 12px; border-radius: 12px 12px 2px 12px; }
+    .chat-msg.assistant { align-self: flex-start; background: #0f172a; color: #cbd5e1; padding: 8px 12px; border-radius: 12px 12px 12px 2px; border: 1px solid #334155; white-space: pre-wrap; }
+    .chat-msg.tool-call { align-self: flex-start; background: #0c1a2e; border: 1px solid #1e3a5f; color: #7dd3fc; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-family: monospace; }
+    .chat-msg.updated { align-self: flex-start; background: #052e16; border: 1px solid #166534; color: #86efac; padding: 5px 10px; border-radius: 8px; font-size: 12px; }
+    .chat-msg.error-msg { align-self: flex-start; background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+    .chat-typing { align-self: flex-start; color: #64748b; font-size: 12px; padding: 4px 8px; }
+    .chat-input-row { padding: 10px 12px; border-top: 1px solid #334155; display: flex; gap: 8px; }
+    .chat-input-row textarea { flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 13px; padding: 8px 10px; resize: none; height: 38px; line-height: 1.4; font-family: inherit; max-height: 100px; overflow-y: auto; }
+    .chat-input-row textarea:focus { outline: none; border-color: #3b82f6; }
+    .chat-input-row button { background: #3b82f6; border: none; border-radius: 8px; color: white; width: 38px; height: 38px; cursor: pointer; font-size: 16px; flex-shrink: 0; }
+    .chat-input-row button:hover { background: #2563eb; }
+    .chat-input-row button:disabled { background: #334155; cursor: default; }
+
+    /* Format toggle */
+    .fmt-toggle { display: flex; background: #0f172a; border: 1px solid #334155; border-radius: 6px; overflow: hidden; }
+    .fmt-btn { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 3px 10px; font-size: 12px; font-weight: 500; }
+    .fmt-btn.active { background: #3b82f6; color: white; }
+
+    /* Env textarea */
+    .env-textarea { width: 100%; height: 280px; font-family: 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 12.5px; line-height: 1.7; padding: 12px 14px; border-radius: 6px; border: 1px solid #334155; background: #080f1a; color: #e2e8f0; resize: vertical; tab-size: 2; }
+    .env-textarea:focus { outline: none; border-color: #3b82f6; }
+
+    /* Searchable secret picker */
+    .secret-search-wrap { position: relative; }
+    .secret-search-wrap input[type="text"] { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+    .secret-search-list { position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #1e293b; border: 1px solid #475569; border-top: none; border-radius: 0 0 6px 6px; z-index: 50; display: none; }
+    .secret-search-list.open { display: block; }
+    .secret-search-list .opt { padding: 8px 12px; font-size: 13px; cursor: pointer; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .secret-search-list .opt:hover, .secret-search-list .opt.focused { background: #334155; color: #f1f5f9; }
+    .secret-search-list .opt-empty { padding: 10px 12px; font-size: 13px; color: #64748b; }
+    .secret-chip { display: inline-flex; align-items: center; gap: 6px; background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 20px; padding: 4px 10px 4px 12px; font-size: 13px; color: #93c5fd; margin-top: 6px; }
+    .secret-chip button { background: none; border: none; color: #64748b; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>AWS Secrets Manager</h1>
+    <select id="regionSelect">
+      <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+      <option value="us-east-1">us-east-1 (N. Virginia)</option>
+      <option value="us-west-2">us-west-2 (Oregon)</option>
+      <option value="eu-west-1">eu-west-1 (Ireland)</option>
+      <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+      <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+    </select>
+    <input type="text" id="searchInput" placeholder="Filter by name..." style="width:200px">
+    <button onclick="loadSecrets()">Refresh</button>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h2>Groups</h2>
+        <button onclick="showCreateGroupModal()" title="New group">+</button>
+      </div>
+      <div class="group-item active" data-group="__all" onclick="selectGroup('__all')">
+        <div>
+          <div class="name">All Secrets</div>
+          <div class="count" id="allCount">0 secrets</div>
+        </div>
+      </div>
+      <div class="group-item" data-group="__ungrouped" onclick="selectGroup('__ungrouped')">
+        <div>
+          <div class="name">Ungrouped</div>
+          <div class="count" id="ungroupedCount">0 secrets</div>
+        </div>
+      </div>
+      <div id="groupsList"></div>
+    </div>
+
+    <div class="main">
+      <div class="toolbar">
+        <button class="primary" onclick="showCreateSecretModal()">+ New Secret</button>
+        <button onclick="showAddToGroupModal()" id="addToGroupBtn" style="display:none">Add to Group</button>
+      </div>
+      <table class="secrets-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Last Changed</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="secretsBody">
+          <tr><td colspan="4"><div class="empty-state"><p>Loading secrets...</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Create Secret Modal -->
+  <div class="modal-overlay" id="createSecretModal">
+    <div class="modal">
+      <h3>Create Secret</h3>
+      <label>Name</label>
+      <input type="text" id="newSecretName" placeholder="e.g. prod/db/password">
+      <label>Value</label>
+      <textarea id="newSecretValue" placeholder='Plain text or JSON: {"user":"admin","pass":"..."}'></textarea>
+      <label>Description</label>
+      <input type="text" id="newSecretDesc" placeholder="Optional description">
+      <label>Add to Group (optional)</label>
+      <select id="newSecretGroup"><option value="">None</option></select>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('createSecretModal')">Cancel</button>
+        <button class="submit" onclick="createSecret()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Group Modal -->
+  <div class="modal-overlay" id="createGroupModal">
+    <div class="modal">
+      <h3>Create Group</h3>
+      <label>Group Name</label>
+      <input type="text" id="newGroupName" placeholder="e.g. Production Databases">
+      <label>Description</label>
+      <input type="text" id="newGroupDesc" placeholder="Optional description">
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('createGroupModal')">Cancel</button>
+        <button class="submit" onclick="createGroup()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add to Group Modal -->
+  <div class="modal-overlay" id="addToGroupModal">
+    <div class="modal" style="width:520px">
+      <h3>Add Secret to Group</h3>
+      <label>Secret</label>
+      <div class="secret-search-wrap">
+        <input type="text" id="addSecretSearch" placeholder="Search secrets..." autocomplete="off">
+        <div class="secret-search-list" id="addSecretList"></div>
+        <input type="hidden" id="addSecretSelected">
+        <div id="addSecretChip" class="secret-chip" style="display:none"></div>
+      </div>
+      <label style="margin-top:14px">Group</label>
+      <select id="addGroupSelect" onchange="onAddGroupChange()"></select>
+      <label style="margin-top:12px" id="addSubgroupLabel">Subgroup <span style="color:#64748b;font-weight:400">(optional)</span></label>
+      <select id="addSubgroupSelect"><option value="">None (add directly to group)</option></select>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('addToGroupModal')">Cancel</button>
+        <button class="submit" onclick="addSecretToGroup()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Subgroup Modal -->
+  <div class="modal-overlay" id="createSubgroupModal">
+    <div class="modal">
+      <h3>Create Subgroup</h3>
+      <label>Parent Group</label>
+      <input type="text" id="newSubgroupParent" readonly style="opacity:0.6">
+      <label>Subgroup Name</label>
+      <input type="text" id="newSubgroupName" placeholder="e.g. Production">
+      <label>Description</label>
+      <input type="text" id="newSubgroupDesc" placeholder="Optional description">
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('createSubgroupModal')">Cancel</button>
+        <button class="submit" onclick="createSubgroup()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- View Secret Modal -->
+  <div class="modal-overlay" id="viewSecretModal">
+    <div class="modal">
+      <h3 id="viewSecretTitle">Secret Value</h3>
+      <div class="secret-value-display" id="viewSecretValue">Loading...</div>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('viewSecretModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Secret Modal -->
+  <div class="modal-overlay" id="editSecretModal">
+    <div class="modal" style="width:560px">
+      <h3>Edit Secret</h3>
+      <label>Name</label>
+      <input type="text" id="editSecretName" readonly style="opacity:0.6">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;margin-bottom:6px">
+        <label style="margin:0">Value</label>
+        <div class="fmt-toggle" id="fmtToggle" style="display:none">
+          <button id="fmtEnvBtn" class="fmt-btn active" onclick="setEditFormat('env')">.env</button>
+          <button id="fmtJsonBtn" class="fmt-btn" onclick="setEditFormat('json')">JSON</button>
+        </div>
+      </div>
+      <div id="envSearchBar" style="display:none;position:relative;margin-bottom:6px">
+        <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#475569;font-size:13px;pointer-events:none">⌕</span>
+        <input type="text" id="envSearchInput" placeholder="Search keys or values..." spellcheck="false"
+          style="width:100%;padding:7px 80px 7px 30px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;"
+          oninput="onEnvSearch(this.value)">
+        <span id="envMatchCount" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:#64748b"></span>
+      </div>
+      <textarea id="editSecretValue" class="env-textarea" spellcheck="false" oninput="onEnvTextareaEdit()"></textarea>
+      <label>Description</label>
+      <input type="text" id="editSecretDesc">
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('editSecretModal')">Cancel</button>
+        <button class="submit" onclick="updateSecret()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Chat Panel -->
+  <button class="chat-fab" onclick="toggleChat()" title="AI Assistant">✦</button>
+  <div class="chat-panel" id="chatPanel">
+    <div class="chat-panel-header">
+      <h4>✦ AI Assistant <span class="ai-badge">Claude</span></h4>
+      <button onclick="toggleChat()">×</button>
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-msg assistant" id="chatWelcome"></div>
+    </div>
+    <div class="chat-input-row">
+      <textarea id="chatInput" placeholder="e.g. add enable_ai=2 to ai-agents group..." rows="1"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'"></textarea>
+      <button id="chatSendBtn" onclick="sendChat()">➤</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = '';
+    let allSecrets = [];
+    let groups = {};
+    let currentGroup = '__all';
+    let currentSubgroup = null;
+    let expandedGroups = new Set();
+
+    function getRegion() { return document.getElementById('regionSelect').value; }
+
+    function toast(msg, error = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast visible' + (error ? ' error' : '');
+      setTimeout(() => el.className = 'toast', 3000);
+    }
+
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    function showModal(id) { document.getElementById(id).classList.add('active'); }
+
+    // Safe DOM element creation helpers to avoid innerHTML XSS
+    function createEl(tag, attrs = {}, children = []) {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'className') el.className = v;
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
+        else el.setAttribute(k, v);
+      }
+      for (const child of children) {
+        if (typeof child === 'string') el.appendChild(document.createTextNode(child));
+        else if (child) el.appendChild(child);
+      }
+      return el;
+    }
+
+    function createButton(text, onClick, className = '') {
+      const btn = document.createElement('button');
+      btn.textContent = text;
+      btn.addEventListener('click', onClick);
+      if (className) btn.className = className;
+      return btn;
+    }
+
+    // ── Load Data ────────────────────────────────────────────────────────────
+
+    async function loadSecrets() {
+      try {
+        const region = getRegion();
+        const resp = await fetch(`${API}/api/secrets?region=${encodeURIComponent(region)}`);
+        allSecrets = await resp.json();
+        if (allSecrets.error) { toast(allSecrets.error, true); allSecrets = []; }
+        renderSecrets();
+      } catch (e) { toast('Failed to load secrets: ' + e.message, true); }
+    }
+
+    async function loadGroups() {
+      try {
+        const resp = await fetch(`${API}/api/groups`);
+        groups = await resp.json();
+        renderGroups();
+      } catch (e) { toast('Failed to load groups: ' + e.message, true); }
+    }
+
+    function getGroupedSecretNames() {
+      const names = new Set();
+      for (const g of Object.values(groups)) {
+        for (const s of g.secrets) names.add(s);
+        for (const sub of Object.values(g.subgroups || {})) {
+          for (const s of sub.secrets) names.add(s);
+        }
+      }
+      return names;
+    }
+
+    function getFilteredSecrets() {
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      let filtered = allSecrets;
+      if (currentGroup === '__ungrouped') {
+        const grouped = getGroupedSecretNames();
+        filtered = filtered.filter(s => !grouped.has(s.name));
+      } else if (currentGroup !== '__all') {
+        if (currentSubgroup) {
+          const subSecrets = new Set(groups[currentGroup]?.subgroups?.[currentSubgroup]?.secrets || []);
+          filtered = filtered.filter(s => subSecrets.has(s.name));
+        } else {
+          const groupSecrets = new Set(groups[currentGroup]?.secrets || []);
+          filtered = filtered.filter(s => groupSecrets.has(s.name));
+        }
+      }
+      if (search) {
+        filtered = filtered.filter(s => s.name.toLowerCase().includes(search));
+      }
+      return filtered;
+    }
+
+    // ── Render (safe DOM methods) ────────────────────────────────────────────
+
+    function renderSecrets() {
+      const filtered = getFilteredSecrets();
+      const grouped = getGroupedSecretNames();
+      document.getElementById('allCount').textContent = allSecrets.length + ' secrets';
+      document.getElementById('ungroupedCount').textContent =
+        allSecrets.filter(s => !grouped.has(s.name)).length + ' secrets';
+      document.getElementById('addToGroupBtn').style.display =
+        Object.keys(groups).length > 0 ? '' : 'none';
+
+      const body = document.getElementById('secretsBody');
+      body.replaceChildren(); // clear safely
+
+      if (filtered.length === 0) {
+        const tr = createEl('tr', {}, [
+          createEl('td', { colspan: '4' }, [
+            createEl('div', { className: 'empty-state' }, [
+              createEl('p', {}, ['No secrets found'])
+            ])
+          ])
+        ]);
+        body.appendChild(tr);
+        return;
+      }
+
+      for (const s of filtered) {
+        const actionsTd = createEl('td', { className: 'actions' }, [
+          createButton('View', () => viewSecret(s.name)),
+          createButton('Edit', () => editSecret(s.name)),
+          createButton('Delete', () => deleteSecret(s.name), 'danger'),
+        ]);
+        if (currentGroup !== '__all' && currentGroup !== '__ungrouped') {
+          if (currentSubgroup) {
+            const removeBtn = createButton('Remove', () => removeFromSubgroup(currentGroup, currentSubgroup, s.name), 'danger');
+            actionsTd.appendChild(removeBtn);
+          } else {
+            const removeBtn = createButton('Remove', () => removeFromGroup(currentGroup, s.name), 'danger');
+            actionsTd.appendChild(removeBtn);
+          }
+        }
+        const tr = createEl('tr', {}, [
+          createEl('td', {}, [createEl('strong', {}, [s.name])]),
+          createEl('td', {}, [s.description || '']),
+          createEl('td', {}, [s.lastChanged ? new Date(s.lastChanged).toLocaleDateString() : '-']),
+          actionsTd,
+        ]);
+        body.appendChild(tr);
+      }
+    }
+
+    function renderGroups() {
+      const el = document.getElementById('groupsList');
+      el.replaceChildren();
+
+      for (const [name, g] of Object.entries(groups)) {
+        const subgroups = g.subgroups || {};
+        const hasSubgroups = Object.keys(subgroups).length > 0;
+        const isExpanded = expandedGroups.has(name);
+        const isGroupActive = currentGroup === name && !currentSubgroup;
+
+        const leftRow = createEl('div', { className: 'name' }, []);
+
+        if (hasSubgroups) {
+          const expandBtn = createButton(isExpanded ? '▾' : '▸', (e) => {
+            e.stopPropagation();
+            if (expandedGroups.has(name)) expandedGroups.delete(name);
+            else expandedGroups.add(name);
+            renderGroups();
+          }, 'group-expand-btn');
+          leftRow.appendChild(expandBtn);
+        } else {
+          const spacer = createEl('span', {}, []);
+          spacer.style.display = 'inline-block';
+          spacer.style.width = '17px';
+          leftRow.appendChild(spacer);
+        }
+        leftRow.appendChild(document.createTextNode(name));
+
+        const addSubBtn = createButton('+', (e) => { e.stopPropagation(); showCreateSubgroupModal(name); }, 'add-sub-btn');
+        addSubBtn.title = 'New subgroup';
+        const deleteBtn = createButton('\u00d7', (e) => { e.stopPropagation(); deleteGroup(name); }, 'delete-btn');
+
+        const item = createEl('div', { className: 'group-item' + (isGroupActive ? ' active' : '') }, [
+          createEl('div', {}, [
+            leftRow,
+            createEl('div', { className: 'count' }, [g.secrets.length + ' secrets \u2014 ' + (g.description || '')]),
+          ]),
+          createEl('div', { className: 'actions' }, [addSubBtn, deleteBtn]),
+        ]);
+        item.dataset.group = name;
+        item.addEventListener('click', () => selectGroup(name));
+        el.appendChild(item);
+
+        if (isExpanded) {
+          for (const [subName, sub] of Object.entries(subgroups)) {
+            const isSubActive = currentGroup === name && currentSubgroup === subName;
+            const subDeleteBtn = createButton('\u00d7', (e) => { e.stopPropagation(); deleteSubgroup(name, subName); }, 'delete-btn');
+            const subItem = createEl('div', { className: 'subgroup-item' + (isSubActive ? ' active' : '') }, [
+              createEl('div', {}, [
+                createEl('div', { className: 'name' }, [subName]),
+                createEl('div', { className: 'count' }, [sub.secrets.length + ' secrets \u2014 ' + (sub.description || '')]),
+              ]),
+              subDeleteBtn,
+            ]);
+            subItem.addEventListener('click', () => selectSubgroup(name, subName));
+            el.appendChild(subItem);
+          }
+        }
+      }
+      populateGroupSelects();
+    }
+
+    function populateGroupSelects() {
+      const names = Object.keys(groups);
+
+      // newSecretGroup (create secret modal)
+      const newSel = document.getElementById('newSecretGroup');
+      newSel.replaceChildren();
+      const noneOpt = document.createElement('option');
+      noneOpt.value = ''; noneOpt.textContent = 'None';
+      newSel.appendChild(noneOpt);
+      for (const n of names) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        newSel.appendChild(opt);
+      }
+
+      // addGroupSelect (add to group modal)
+      const addSel = document.getElementById('addGroupSelect');
+      const prev = addSel.value;
+      addSel.replaceChildren();
+      for (const n of names) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        addSel.appendChild(opt);
+      }
+      if (prev && groups[prev]) addSel.value = prev;
+      onAddGroupChange();
+    }
+
+    function onAddGroupChange() {
+      const groupName = document.getElementById('addGroupSelect').value;
+      const subSel = document.getElementById('addSubgroupSelect');
+      subSel.replaceChildren();
+      const none = document.createElement('option');
+      none.value = ''; none.textContent = 'None (add directly to group)';
+      subSel.appendChild(none);
+      const subs = groups[groupName]?.subgroups || {};
+      for (const n of Object.keys(subs)) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        subSel.appendChild(opt);
+      }
+    }
+
+    // ── Secret search picker ─────────────────────────────────────────────────
+
+    let secretSearchFocused = -1;
+
+    function initSecretSearchPicker() {
+      const input = document.getElementById('addSecretSearch');
+      const list = document.getElementById('addSecretList');
+
+      function renderList(query) {
+        const q = query.toLowerCase();
+        const matches = allSecrets.filter(s => s.name.toLowerCase().includes(q)).slice(0, 80);
+        list.replaceChildren();
+        if (matches.length === 0) {
+          const d = document.createElement('div');
+          d.className = 'opt-empty'; d.textContent = 'No secrets match';
+          list.appendChild(d);
+        } else {
+          matches.forEach((s, i) => {
+            const d = document.createElement('div');
+            d.className = 'opt'; d.textContent = s.name;
+            d.dataset.idx = i;
+            d.addEventListener('mousedown', (e) => { e.preventDefault(); selectSecretPicker(s.name); });
+            list.appendChild(d);
+          });
+        }
+        secretSearchFocused = -1;
+        list.classList.add('open');
+      }
+
+      input.addEventListener('input', () => {
+        if (document.getElementById('addSecretSelected').value) clearSecretPicker();
+        renderList(input.value);
+      });
+      input.addEventListener('focus', () => { if (!document.getElementById('addSecretSelected').value) renderList(input.value); });
+      input.addEventListener('blur', () => { setTimeout(() => list.classList.remove('open'), 150); });
+      input.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('.opt');
+        if (e.key === 'ArrowDown') { e.preventDefault(); secretSearchFocused = Math.min(secretSearchFocused + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle('focused', i === secretSearchFocused)); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); secretSearchFocused = Math.max(secretSearchFocused - 1, 0); items.forEach((el, i) => el.classList.toggle('focused', i === secretSearchFocused)); }
+        else if (e.key === 'Enter' && secretSearchFocused >= 0) { e.preventDefault(); selectSecretPicker(items[secretSearchFocused].textContent); }
+        else if (e.key === 'Escape') { list.classList.remove('open'); }
+      });
+    }
+
+    function selectSecretPicker(name) {
+      document.getElementById('addSecretSelected').value = name;
+      document.getElementById('addSecretSearch').value = '';
+      document.getElementById('addSecretSearch').placeholder = '';
+      document.getElementById('addSecretList').classList.remove('open');
+      const chip = document.getElementById('addSecretChip');
+      chip.replaceChildren();
+      chip.appendChild(document.createTextNode(name));
+      const clearBtn = document.createElement('button');
+      clearBtn.textContent = '×';
+      clearBtn.addEventListener('click', clearSecretPicker);
+      chip.appendChild(clearBtn);
+      chip.style.display = 'inline-flex';
+    }
+
+    function clearSecretPicker() {
+      document.getElementById('addSecretSelected').value = '';
+      document.getElementById('addSecretSearch').value = '';
+      document.getElementById('addSecretSearch').placeholder = 'Search secrets...';
+      document.getElementById('addSecretChip').style.display = 'none';
+      document.getElementById('addSecretSearch').focus();
+    }
+
+    function selectGroup(name) {
+      currentGroup = name;
+      currentSubgroup = null;
+      renderGroups();
+      renderSecrets();
+    }
+
+    function selectSubgroup(groupName, subName) {
+      currentGroup = groupName;
+      currentSubgroup = subName;
+      expandedGroups.add(groupName);
+      renderGroups();
+      renderSecrets();
+    }
+
+    // ── Secret Actions ───────────────────────────────────────────────────────
+
+    function showCreateSecretModal() {
+      document.getElementById('newSecretName').value = '';
+      document.getElementById('newSecretValue').value = '';
+      document.getElementById('newSecretDesc').value = '';
+      showModal('createSecretModal');
+    }
+
+    async function createSecret() {
+      const name = document.getElementById('newSecretName').value.trim();
+      const secretValue = document.getElementById('newSecretValue').value;
+      const description = document.getElementById('newSecretDesc').value.trim();
+      const group = document.getElementById('newSecretGroup').value;
+      if (!name || !secretValue) { toast('Name and value required', true); return; }
+      try {
+        const resp = await fetch(`${API}/api/secrets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, secretValue, description, region: getRegion() }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        if (group) {
+          await fetch(`${API}/api/groups/${encodeURIComponent(group)}/secrets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secretName: name }),
+          });
+          await loadGroups();
+        }
+        closeModal('createSecretModal');
+        toast('Secret created');
+        await loadSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function viewSecret(name) {
+      document.getElementById('viewSecretTitle').textContent = name;
+      document.getElementById('viewSecretValue').textContent = 'Loading...';
+      showModal('viewSecretModal');
+      try {
+        const resp = await fetch(`${API}/api/secrets/${encodeURIComponent(name)}/value?region=${encodeURIComponent(getRegion())}`);
+        const data = await resp.json();
+        if (data.error) { document.getElementById('viewSecretValue').textContent = data.error; return; }
+        try {
+          const parsed = JSON.parse(data.secretValue);
+          document.getElementById('viewSecretValue').textContent = JSON.stringify(parsed, null, 2);
+        } catch {
+          document.getElementById('viewSecretValue').textContent = data.secretValue;
+        }
+      } catch (e) { document.getElementById('viewSecretValue').textContent = e.message; }
+    }
+
+    // ── Edit format helpers ──────────────────────────────────────────────────
+
+    let editFormat = 'env'; // 'env' | 'json'
+    let editIsJson = false;
+    let allEnvText = '';   // full unfiltered text; source of truth when search is active
+    let envFiltered = false;
+
+    function onEnvTextareaEdit() {
+      if (!envFiltered) allEnvText = document.getElementById('editSecretValue').value;
+    }
+
+    function onEnvSearch(query) {
+      const ta = document.getElementById('editSecretValue');
+      const count = document.getElementById('envMatchCount');
+      if (!query) {
+        ta.value = allEnvText;
+        ta.readOnly = false;
+        ta.style.opacity = '1';
+        count.style.display = 'none';
+        envFiltered = false;
+        return;
+      }
+      // Snapshot current edits before filtering
+      if (!envFiltered) allEnvText = ta.value;
+      const q = query.toLowerCase();
+      const allLines = allEnvText.split('\n');
+      const matched = allLines.filter(l => l.toLowerCase().includes(q));
+      ta.value = matched.join('\n');
+      ta.readOnly = true;
+      ta.style.opacity = '0.85';
+      const total = allLines.filter(l => l.trim()).length;
+      count.textContent = `${matched.length} / ${total}`;
+      count.style.display = '';
+      envFiltered = true;
+    }
+
+    function jsonToEnv(obj) {
+      return Object.entries(obj)
+        .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+        .join('\n');
+    }
+
+    function envToJson(text) {
+      const obj = {};
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq === -1) continue;
+        const key = trimmed.slice(0, eq).trim();
+        obj[key] = trimmed.slice(eq + 1);
+      }
+      return obj;
+    }
+
+    function setEditFormat(fmt) {
+      if (!editIsJson || fmt === editFormat) return;
+      const ta = document.getElementById('editSecretValue');
+      // Always work on the full text
+      const full = envFiltered ? allEnvText : ta.value;
+      if (fmt === 'env') {
+        try { ta.value = jsonToEnv(JSON.parse(full)); } catch { toast('Invalid JSON', true); return; }
+        document.getElementById('envSearchBar').style.display = '';
+      } else {
+        ta.value = JSON.stringify(envToJson(full), null, 2);
+        document.getElementById('envSearchBar').style.display = 'none';
+        document.getElementById('envSearchInput').value = '';
+        onEnvSearch('');
+      }
+      allEnvText = ta.value;
+      ta.readOnly = false;
+      ta.style.opacity = '1';
+      envFiltered = false;
+      editFormat = fmt;
+      document.getElementById('fmtEnvBtn').classList.toggle('active', fmt === 'env');
+      document.getElementById('fmtJsonBtn').classList.toggle('active', fmt === 'json');
+    }
+
+    async function editSecret(name) {
+      const ta = document.getElementById('editSecretValue');
+      ta.value = 'Loading...';
+      ta.readOnly = false;
+      ta.style.opacity = '1';
+      document.getElementById('editSecretName').value = name;
+      document.getElementById('editSecretDesc').value = '';
+      document.getElementById('fmtToggle').style.display = 'none';
+      document.getElementById('envSearchBar').style.display = 'none';
+      document.getElementById('envSearchInput').value = '';
+      document.getElementById('envMatchCount').style.display = 'none';
+      editIsJson = false;
+      editFormat = 'env';
+      allEnvText = '';
+      envFiltered = false;
+      showModal('editSecretModal');
+      try {
+        const [valResp, descResp] = await Promise.all([
+          fetch(`${API}/api/secrets/${encodeURIComponent(name)}/value?region=${encodeURIComponent(getRegion())}`),
+          fetch(`${API}/api/secrets/${encodeURIComponent(name)}/describe?region=${encodeURIComponent(getRegion())}`),
+        ]);
+        const valData = await valResp.json();
+        const descData = await descResp.json();
+        document.getElementById('editSecretDesc').value = descData.description || '';
+        const raw = valData.secretValue || '';
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            editIsJson = true;
+            ta.value = jsonToEnv(parsed);
+            allEnvText = ta.value;
+            document.getElementById('fmtToggle').style.display = '';
+            document.getElementById('envSearchBar').style.display = '';
+            document.getElementById('fmtEnvBtn').classList.add('active');
+            document.getElementById('fmtJsonBtn').classList.remove('active');
+            return;
+          }
+        } catch { /* plain text */ }
+        ta.value = raw;
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function updateSecret() {
+      const name = document.getElementById('editSecretName').value;
+      const description = document.getElementById('editSecretDesc').value;
+      const raw = envFiltered ? allEnvText : document.getElementById('editSecretValue').value;
+      const secretValue = (editIsJson && editFormat === 'env') ? JSON.stringify(envToJson(raw)) : raw;
+      try {
+        const resp = await fetch(`${API}/api/secrets/${encodeURIComponent(name)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secretValue, description, region: getRegion() }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        closeModal('editSecretModal');
+        toast('Secret updated');
+        await loadSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function deleteSecret(name) {
+      if (!confirm('Delete secret "' + name + '"? It will be recoverable for 30 days.')) return;
+      try {
+        const resp = await fetch(`${API}/api/secrets/${encodeURIComponent(name)}?region=${encodeURIComponent(getRegion())}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        toast('Secret scheduled for deletion');
+        await loadSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    // ── Group Actions ────────────────────────────────────────────────────────
+
+    function showCreateGroupModal() {
+      document.getElementById('newGroupName').value = '';
+      document.getElementById('newGroupDesc').value = '';
+      showModal('createGroupModal');
+    }
+
+    async function createGroup() {
+      const name = document.getElementById('newGroupName').value.trim();
+      const description = document.getElementById('newGroupDesc').value.trim();
+      if (!name) { toast('Group name required', true); return; }
+      try {
+        const resp = await fetch(`${API}/api/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        closeModal('createGroupModal');
+        toast('Group created');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function deleteGroup(name) {
+      if (!confirm('Delete group "' + name + '"? This won\'t delete the secrets themselves.')) return;
+      try {
+        await fetch(`${API}/api/groups/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (currentGroup === name) { currentSubgroup = null; selectGroup('__all'); }
+        toast('Group deleted');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function showAddToGroupModal() {
+      clearSecretPicker();
+      populateGroupSelects();
+      // Pre-select current group if one is active
+      if (currentGroup !== '__all' && currentGroup !== '__ungrouped' && groups[currentGroup]) {
+        document.getElementById('addGroupSelect').value = currentGroup;
+        onAddGroupChange();
+        if (currentSubgroup) document.getElementById('addSubgroupSelect').value = currentSubgroup;
+      }
+      showModal('addToGroupModal');
+      setTimeout(() => document.getElementById('addSecretSearch').focus(), 50);
+    }
+
+    async function addSecretToGroup() {
+      const secretName = document.getElementById('addSecretSelected').value;
+      const groupName = document.getElementById('addGroupSelect').value;
+      const subgroupName = document.getElementById('addSubgroupSelect').value;
+      if (!secretName) { toast('Select a secret', true); return; }
+      if (!groupName) { toast('Select a group', true); return; }
+      try {
+        let url, body;
+        if (subgroupName) {
+          url = `${API}/api/groups/${encodeURIComponent(groupName)}/subgroups/${encodeURIComponent(subgroupName)}/secrets`;
+          body = JSON.stringify({ secretName });
+        } else {
+          url = `${API}/api/groups/${encodeURIComponent(groupName)}/secrets`;
+          body = JSON.stringify({ secretName });
+        }
+        const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        closeModal('addToGroupModal');
+        toast('Added to ' + (subgroupName ? `${groupName} / ${subgroupName}` : groupName));
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function removeFromGroup(groupName, secretName) {
+      try {
+        await fetch(`${API}/api/groups/${encodeURIComponent(groupName)}/secrets/${encodeURIComponent(secretName)}`, { method: 'DELETE' });
+        toast('Removed from group');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    // ── Subgroup Actions ─────────────────────────────────────────────────────
+
+    function showCreateSubgroupModal(groupName) {
+      document.getElementById('newSubgroupParent').value = groupName;
+      document.getElementById('newSubgroupName').value = '';
+      document.getElementById('newSubgroupDesc').value = '';
+      showModal('createSubgroupModal');
+    }
+
+    async function createSubgroup() {
+      const groupName = document.getElementById('newSubgroupParent').value;
+      const subgroupName = document.getElementById('newSubgroupName').value.trim();
+      const description = document.getElementById('newSubgroupDesc').value.trim();
+      if (!subgroupName) { toast('Subgroup name required', true); return; }
+      try {
+        const resp = await fetch(`${API}/api/groups/${encodeURIComponent(groupName)}/subgroups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subgroupName, description }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast(data.error, true); return; }
+        expandedGroups.add(groupName);
+        closeModal('createSubgroupModal');
+        toast('Subgroup created');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function deleteSubgroup(groupName, subName) {
+      if (!confirm(`Delete subgroup "${subName}"? This won't delete the secrets themselves.`)) return;
+      try {
+        await fetch(`${API}/api/groups/${encodeURIComponent(groupName)}/subgroups/${encodeURIComponent(subName)}`, { method: 'DELETE' });
+        if (currentGroup === groupName && currentSubgroup === subName) selectGroup(groupName);
+        toast('Subgroup deleted');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function removeFromSubgroup(groupName, subName, secretName) {
+      try {
+        await fetch(`${API}/api/groups/${encodeURIComponent(groupName)}/subgroups/${encodeURIComponent(subName)}/secrets/${encodeURIComponent(secretName)}`, { method: 'DELETE' });
+        toast('Removed from subgroup');
+        await loadGroups();
+        renderSecrets();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    // ── AI Chat ──────────────────────────────────────────────────────────────
+
+    let chatOpen = false;
+
+    function toggleChat() {
+      chatOpen = !chatOpen;
+      document.getElementById('chatPanel').classList.toggle('open', chatOpen);
+      if (chatOpen) setTimeout(() => document.getElementById('chatInput').focus(), 180);
+    }
+
+    function appendChatMsg(className, text, childNodes) {
+      const div = document.createElement('div');
+      div.className = 'chat-msg ' + className;
+      if (childNodes) {
+        for (const n of childNodes) div.appendChild(n);
+      } else {
+        div.textContent = text || '';
+      }
+      const msgs = document.getElementById('chatMessages');
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return div;
+    }
+
+    async function sendChat() {
+      const input = document.getElementById('chatInput');
+      const btn = document.getElementById('chatSendBtn');
+      const message = input.value.trim();
+      if (!message) return;
+
+      input.value = '';
+      input.style.height = '38px';
+      appendChatMsg('user', message);
+
+      btn.disabled = true;
+      const typing = appendChatMsg('chat-typing', '⋯ thinking');
+
+      let assistantDiv = null;
+      let assistantText = '';
+
+      try {
+        const resp = await fetch(`${API}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, region: getRegion() }),
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const evt = JSON.parse(line.slice(6));
+
+            if (evt.type === 'text') {
+              typing.remove();
+              if (!assistantDiv) assistantDiv = appendChatMsg('assistant', '');
+              assistantText += evt.text;
+              assistantDiv.textContent = assistantText;
+              document.getElementById('chatMessages').scrollTop = 9999;
+            } else if (evt.type === 'tool_call') {
+              typing.remove();
+              const label = evt.tool === 'get_group_secrets' ? `📋 listing secrets in ${evt.input.group_name}`
+                : evt.tool === 'get_secret_value' ? `🔍 reading ${evt.input.secret_name}`
+                : evt.tool === 'update_secret_value' ? `✏️ updating ${evt.input.secret_name}` : evt.tool;
+              appendChatMsg('tool-call', label);
+            } else if (evt.type === 'updated') {
+              appendChatMsg('updated', `✓ updated ${evt.secret}`);
+            } else if (evt.type === 'error') {
+              typing.remove();
+              appendChatMsg('error-msg', '⚠ ' + evt.text);
+            } else if (evt.type === 'done') {
+              typing.remove();
+              await loadGroups();
+              await loadSecrets();
+            }
+          }
+        }
+      } catch (e) {
+        typing.remove();
+        appendChatMsg('error-msg', '⚠ ' + e.message);
+      }
+
+      btn.disabled = false;
+      input.focus();
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+
+    // Restore saved region
+    const savedRegion = localStorage.getItem('awsRegion');
+    if (savedRegion) document.getElementById('regionSelect').value = savedRegion;
+
+    document.getElementById('searchInput').addEventListener('input', renderSecrets);
+    document.getElementById('regionSelect').addEventListener('change', () => {
+      localStorage.setItem('awsRegion', getRegion());
+      loadSecrets();
+    });
+
+    // Build welcome message safely
+    (function() {
+      const w = document.getElementById('chatWelcome');
+      const lines = [
+        'I can add, update, or remove variables across secrets in a group. Try:',
+        '• add enable_ai=2 to all secrets in ai-agents',
+        '• remove DEBUG_MODE from production group',
+        '• set LOG_LEVEL=info in all secrets in staging',
+      ];
+      lines.forEach((line, i) => {
+        if (i > 0) w.appendChild(document.createElement('br'));
+        w.appendChild(document.createTextNode(line));
+      });
+    })();
+
+    initSecretSearchPicker();
+    loadGroups();
+    loadSecrets();
+  </script>
+</body>
+</html>
