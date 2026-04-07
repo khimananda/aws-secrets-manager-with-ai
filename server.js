@@ -194,37 +194,57 @@ app.post("/api/chat", async (req, res) => {
     const parseRes = await anthropic.messages.create({
       model: "claude-haiku-4-5",
       max_tokens: 256,
-      system: `You extract secret management operations from natural language.
+      system: `You extract secret management operations from natural language. Use the full conversation history to resolve incomplete messages.
 Available groups: ${groupNames.join(", ")}.
 
 Output ONLY raw JSON, no markdown, no code fences, no explanation.
 
-A target can be a GROUP (affects all secrets in that group) OR a specific SECRET NAME (a domain-like string e.g. "trackos-api.dev.portpro.io").
+A target can be:
+- A GROUP name (from the available groups list above) — affects all secrets in that group
+- A specific SECRET NAME — a domain-like string containing dots (e.g. "trackos-api.dev.portpro.io", "transaction.legalremit.com")
 
-Schema:
-{"valid":true,"action":"add"|"update"|"remove","key":"KEY","value":"VALUE_OR_NULL","group":"GROUP_OR_NULL","subgroup":"SUBGROUP_OR_NULL","secret":"SPECIFIC_SECRET_NAME_OR_NULL"}
+Schema — supports multiple key/value pairs:
+{"valid":true,"action":"add"|"update"|"remove","entries":[{"key":"K","value":"V_OR_NULL"}],"group":"GROUP_OR_NULL","subgroup":"SUBGROUP_OR_NULL","secret":"SECRET_NAME_OR_NULL"}
 
 Examples:
-"add gemini=true to ai-agents group" → {"valid":true,"action":"add","key":"gemini","value":"true","group":"ai-agents","subgroup":null,"secret":null}
-"add log=true in trackos-api.dev.portpro.io" → {"valid":true,"action":"add","key":"log","value":"true","group":null,"subgroup":null,"secret":"trackos-api.dev.portpro.io"}
-"remove DEBUG from production" → {"valid":true,"action":"remove","key":"DEBUG","value":null,"group":"production","subgroup":null,"secret":null}
-"set LOG_LEVEL=info in api.dev.portpro.io" → {"valid":true,"action":"update","key":"LOG_LEVEL","value":"info","group":null,"subgroup":null,"secret":"api.dev.portpro.io"}
+"add gemini=true to ai-agents" → {"valid":true,"action":"add","entries":[{"key":"gemini","value":"true"}],"group":"ai-agents","subgroup":null,"secret":null}
+"add A=1 B=2 C=3 in transaction.legalremit.com" → {"valid":true,"action":"add","entries":[{"key":"A","value":"1"},{"key":"B","value":"2"},{"key":"C","value":"3"}],"group":null,"subgroup":null,"secret":"transaction.legalremit.com"}
+"remove DEBUG from production" → {"valid":true,"action":"remove","entries":[{"key":"DEBUG","value":null}],"group":"production","subgroup":null,"secret":null}
 "what is the weather" → {"valid":false}
 
 Rules:
-- If the target looks like a domain or secret name (contains dots), set "secret" and leave "group" null.
-- If the target matches an available group name, set "group" and leave "secret" null.
-- "add"/"set" → action "add". "remove"/"delete" → action "remove". "update"/"change" → action "update".
-- Strip trailing words like "group" or "secrets" when matching group names.`,
+- Use conversation history to fill in missing parts (e.g. if user said key=value before and now says the target, combine them).
+- Any string with dots that is NOT in the groups list is a secret name, not a group.
+- "add"/"set" → "add". "remove"/"delete" → "remove". "update"/"change" → "update".`,
       messages: [...history, { role: "user", content: message }],
     });
 
     let intent;
     const rawParse = parseRes.content[0].text.trim()
-      .replace(/^```[a-z]*\n?/i, "").replace(/```$/,"").trim();
+      .replace(/^```[a-z]*\n?/i, "").replace(/```$/, "").trim();
     console.log("[chat] parse →", rawParse);
     try {
-      intent = JSON.parse(rawParse);
+      // Model sometimes returns multiple JSON objects — merge into one with entries[]
+      const jsonObjects = rawParse
+        .split(/\n(?=\{)/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(s => JSON.parse(s));
+
+      if (jsonObjects.length > 1 && jsonObjects.every(o => o.valid)) {
+        // Merge: same action/target, combine entries
+        const first = jsonObjects[0];
+        intent = {
+          valid: true,
+          action: first.action,
+          group: first.group,
+          subgroup: first.subgroup,
+          secret: first.secret,
+          entries: jsonObjects.map(o => ({ key: o.entries?.[0]?.key ?? o.key, value: o.entries?.[0]?.value ?? o.value })),
+        };
+      } else {
+        intent = jsonObjects[0] ?? { valid: false };
+      }
     } catch {
       intent = { valid: false };
     }
@@ -235,8 +255,9 @@ Rules:
         model: "claude-haiku-4-5",
         max_tokens: 128,
         system: `You are a secrets manager assistant. Available groups: ${groupNames.join(", ")}.
-The user's request is incomplete or unclear. Ask one short clarifying question to get the missing info (group name, key, or value).
-If the request is completely unrelated to secret management, reply: "I can only help with adding, updating, or removing variables in your secrets groups."`,
+Secrets can also be targeted directly by their name (e.g. domain names like "transaction.legalremit.com").
+The user's request is incomplete. Ask ONE short question to get the missing info (target secret/group name, key, or value).
+If completely unrelated to secret management, reply: "I can only help with adding, updating, or removing variables in your secrets groups."`,
         messages: [...history, { role: "user", content: message }],
       });
       send({ type: "text", text: clarifyRes.content[0].text.trim() });
@@ -279,18 +300,21 @@ If the request is completely unrelated to secret management, reply: "I can only 
     }
 
     // ── Step 2: execute directly in code — no LLM loop needed ───────────────
+    const entries = Array.isArray(intent.entries) ? intent.entries : [];
     let updated = 0;
     for (const secretName of secrets) {
       send({ type: "tool_call", tool: "get_secret_value", input: { secret_name: secretName } });
-      let obj = {};
       try {
         const val = await svc.getSecretValue(secretName, region);
+        let obj = {};
         try { obj = JSON.parse(val.secretValue); } catch { obj = {}; }
 
-        if (intent.action === "add" || intent.action === "update") {
-          obj[intent.key] = intent.value;
-        } else if (intent.action === "remove") {
-          delete obj[intent.key];
+        for (const { key, value } of entries) {
+          if (intent.action === "remove") {
+            delete obj[key];
+          } else {
+            obj[key] = value;
+          }
         }
 
         bak.backupSecret(secretName, val.secretValue, "chat");
@@ -304,9 +328,9 @@ If the request is completely unrelated to secret management, reply: "I can only 
     }
 
     const verb = intent.action === "remove" ? "removed" : "set";
-    const keyVal = intent.action === "remove" ? intent.key : `${intent.key}=${intent.value}`;
+    const keys = entries.map(e => intent.action === "remove" ? e.key : `${e.key}=${e.value}`).join(", ");
     const target = intent.secret || `${intent.group}${intent.subgroup ? "/" + intent.subgroup : ""}`;
-    send({ type: "text", text: `Done — ${verb} ${keyVal} in ${updated} of ${secrets.length} secret(s) in ${target}.` });
+    send({ type: "text", text: `Done — ${verb} ${keys} in ${updated} of ${secrets.length} secret(s) in ${target}.` });
 
   } catch (e) {
     send({ type: "error", text: e.message });

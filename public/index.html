@@ -1080,6 +1080,27 @@
     let chatOpen = false;
     let chatHistory = []; // [{role:"user"|"assistant", content:"..."}]
 
+    function clearChat() {
+      chatHistory = [];
+      const msgs = document.getElementById('chatMessages');
+      msgs.replaceChildren();
+      // Re-add welcome message
+      const welcome = document.createElement('div');
+      welcome.className = 'chat-msg assistant';
+      welcome.id = 'chatWelcome';
+      const region = getRegion();
+      const lines = [
+        `Switched to ${region}. Chat history cleared.`,
+        'I can add, update, or remove variables across secrets in a group. Try:',
+        '• add enable_ai=2 to all secrets in ai-agents',
+      ];
+      lines.forEach((line, i) => {
+        if (i > 0) welcome.appendChild(document.createElement('br'));
+        welcome.appendChild(document.createTextNode(line));
+      });
+      msgs.appendChild(welcome);
+    }
+
     function toggleChat() {
       chatOpen = !chatOpen;
       document.getElementById('chatPanel').classList.toggle('open', chatOpen);
@@ -1181,6 +1202,7 @@
     document.getElementById('searchInput').addEventListener('input', renderSecrets);
     document.getElementById('regionSelect').addEventListener('change', () => {
       localStorage.setItem('awsRegion', getRegion());
+      clearChat();
       loadSecrets();
     });
 
