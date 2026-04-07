@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Anthropic from "@anthropic-ai/sdk";
 import * as svc from "./secrets-service.js";
+import * as bak from "./backup-service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -55,6 +56,8 @@ app.post("/api/secrets", async (req, res) => {
 app.put("/api/secrets/:name", async (req, res) => {
   try {
     const { secretValue, description, region } = req.body;
+    const current = await svc.getSecretValue(req.params.name, region);
+    bak.backupSecret(req.params.name, current.secretValue, "ui");
     const data = await svc.updateSecret(req.params.name, secretValue, description, region);
     res.json(data);
   } catch (e) {
@@ -152,12 +155,26 @@ app.delete("/api/groups/:name/subgroups/:subName/secrets/:secretName", (req, res
   }
 });
 
+// ── Backups ────────────────────────────────────────────────────────────────
+
+app.get("/api/backups", (_req, res) => {
+  res.json(bak.listBackups());
+});
+
+app.get("/api/backups/:date/:file", (req, res) => {
+  try {
+    res.json(bak.readBackup(req.params.date, req.params.file));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── AI Chat ────────────────────────────────────────────────────────────────
 
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 
 app.post("/api/chat", async (req, res) => {
-  const { message, region = "ap-southeast-2" } = req.body;
+  const { message, region = "ap-southeast-2", history = [] } = req.body;
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -170,135 +187,127 @@ app.post("/api/chat", async (req, res) => {
   };
 
   const groups = svc.getGroups();
-  const groupSummary = Object.entries(groups).map(([name, g]) => ({
-    name,
-    secrets: g.secrets,
-    subgroups: Object.keys(g.subgroups || {}),
-  }));
-
-  const tools = [
-    {
-      name: "get_group_secrets",
-      description: "Get all secret names in a group (or subgroup)",
-      input_schema: {
-        type: "object",
-        properties: {
-          group_name: { type: "string" },
-          subgroup_name: { type: "string", description: "Optional subgroup name" },
-        },
-        required: ["group_name"],
-      },
-    },
-    {
-      name: "get_secret_value",
-      description: "Get the current JSON value of a secret from AWS",
-      input_schema: {
-        type: "object",
-        properties: { secret_name: { type: "string" } },
-        required: ["secret_name"],
-      },
-    },
-    {
-      name: "update_secret_value",
-      description: "Update a secret's JSON key-value pairs in AWS Secrets Manager",
-      input_schema: {
-        type: "object",
-        properties: {
-          secret_name: { type: "string" },
-          new_value: { type: "object", description: "Complete JSON object to store" },
-        },
-        required: ["secret_name", "new_value"],
-      },
-    },
-  ];
-
-  const system = `You are a strictly scoped assistant for AWS Secrets Manager. Your ONLY allowed operations are:
-- Add a key=value to secrets in a group
-- Update an existing key's value in secrets in a group
-- Remove a key from secrets in a group
-
-Available groups: ${JSON.stringify(groupSummary, null, 2)}
-
-STRICT RULES — you must follow these without exception:
-1. REFUSE any request that is not about adding, updating, or removing a key-value variable in a secrets group. This includes: general questions, coding help, explanations, anything unrelated to secret variable management.
-2. NEVER read or expose the full contents of a secret to the user. Never print or summarize secret values.
-3. NEVER delete an entire secret, only individual keys within a secret's JSON.
-4. Only operate on groups that exist in the list above.
-5. If the request is out of scope, reply with exactly: "I can only help with adding, updating, or removing variables in your secrets groups."
-
-When a valid request is made:
-1. Call get_group_secrets to list secrets in the target group
-2. For each secret, call get_secret_value to get its current JSON
-3. Apply only the requested change (add/update/delete the specific key), leave all other keys unchanged
-4. Call update_secret_value with the full modified object
-5. Confirm what was done (secret names updated, key changed) — do NOT show values`;
-
-  const messages = [{ role: "user", content: message }];
+  const groupNames = Object.keys(groups);
 
   try {
-    while (true) {
-      const response = await anthropic.messages.create({
-        model: "claude-opus-4-6",
-        max_tokens: 4096,
-        system,
-        tools,
-        messages,
+    // ── Step 1: parse intent with a single Claude call ──────────────────────
+    const parseRes = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 256,
+      system: `You extract secret management operations from natural language.
+Available groups: ${groupNames.join(", ")}.
+
+Output ONLY raw JSON, no markdown, no code fences, no explanation.
+
+A target can be a GROUP (affects all secrets in that group) OR a specific SECRET NAME (a domain-like string e.g. "trackos-api.dev.portpro.io").
+
+Schema:
+{"valid":true,"action":"add"|"update"|"remove","key":"KEY","value":"VALUE_OR_NULL","group":"GROUP_OR_NULL","subgroup":"SUBGROUP_OR_NULL","secret":"SPECIFIC_SECRET_NAME_OR_NULL"}
+
+Examples:
+"add gemini=true to ai-agents group" → {"valid":true,"action":"add","key":"gemini","value":"true","group":"ai-agents","subgroup":null,"secret":null}
+"add log=true in trackos-api.dev.portpro.io" → {"valid":true,"action":"add","key":"log","value":"true","group":null,"subgroup":null,"secret":"trackos-api.dev.portpro.io"}
+"remove DEBUG from production" → {"valid":true,"action":"remove","key":"DEBUG","value":null,"group":"production","subgroup":null,"secret":null}
+"set LOG_LEVEL=info in api.dev.portpro.io" → {"valid":true,"action":"update","key":"LOG_LEVEL","value":"info","group":null,"subgroup":null,"secret":"api.dev.portpro.io"}
+"what is the weather" → {"valid":false}
+
+Rules:
+- If the target looks like a domain or secret name (contains dots), set "secret" and leave "group" null.
+- If the target matches an available group name, set "group" and leave "secret" null.
+- "add"/"set" → action "add". "remove"/"delete" → action "remove". "update"/"change" → action "update".
+- Strip trailing words like "group" or "secrets" when matching group names.`,
+      messages: [...history, { role: "user", content: message }],
+    });
+
+    let intent;
+    const rawParse = parseRes.content[0].text.trim()
+      .replace(/^```[a-z]*\n?/i, "").replace(/```$/,"").trim();
+    console.log("[chat] parse →", rawParse);
+    try {
+      intent = JSON.parse(rawParse);
+    } catch {
+      intent = { valid: false };
+    }
+
+    if (!intent.valid) {
+      // Ask Claude to generate a helpful follow-up question
+      const clarifyRes = await anthropic.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 128,
+        system: `You are a secrets manager assistant. Available groups: ${groupNames.join(", ")}.
+The user's request is incomplete or unclear. Ask one short clarifying question to get the missing info (group name, key, or value).
+If the request is completely unrelated to secret management, reply: "I can only help with adding, updating, or removing variables in your secrets groups."`,
+        messages: [...history, { role: "user", content: message }],
       });
+      send({ type: "text", text: clarifyRes.content[0].text.trim() });
+      send({ type: "done" });
+      res.end();
+      return;
+    }
 
-      for (const block of response.content) {
-        if (block.type === "text" && block.text) {
-          send({ type: "text", text: block.text });
-        }
+    let secrets = [];
+
+    if (intent.secret) {
+      // Target is a specific secret by name
+      secrets = [intent.secret];
+    } else {
+      // Target is a group (or subgroup)
+      if (intent.group) {
+        intent.group = intent.group.replace(/\s*(group|secrets?)$/i, "").trim();
       }
+      let group = groups[intent.group];
+      if (!group) {
+        const fuzzy = groupNames.find(n => n.toLowerCase() === intent.group?.toLowerCase());
+        if (fuzzy) { intent.group = fuzzy; group = groups[fuzzy]; }
+      }
+      if (!group) {
+        send({ type: "error", text: `Group "${intent.group}" not found. Available: ${groupNames.join(", ")}` });
+        send({ type: "done" });
+        res.end();
+        return;
+      }
+      secrets = intent.subgroup
+        ? (group.subgroups?.[intent.subgroup]?.secrets || [])
+        : (group.secrets || []);
+    }
 
-      if (response.stop_reason === "end_turn") break;
+    if (secrets.length === 0) {
+      send({ type: "text", text: `No secrets found for the specified target.` });
+      send({ type: "done" });
+      res.end();
+      return;
+    }
 
-      if (response.stop_reason === "tool_use") {
-        messages.push({ role: "assistant", content: response.content });
-        const toolResults = [];
+    // ── Step 2: execute directly in code — no LLM loop needed ───────────────
+    let updated = 0;
+    for (const secretName of secrets) {
+      send({ type: "tool_call", tool: "get_secret_value", input: { secret_name: secretName } });
+      let obj = {};
+      try {
+        const val = await svc.getSecretValue(secretName, region);
+        try { obj = JSON.parse(val.secretValue); } catch { obj = {}; }
 
-        for (const block of response.content) {
-          if (block.type !== "tool_use") continue;
-
-          send({ type: "tool_call", tool: block.name, input: block.input });
-
-          let result;
-          try {
-            if (block.name === "get_group_secrets") {
-              const g = groups[block.input.group_name];
-              if (!g) throw new Error(`Group "${block.input.group_name}" not found`);
-              const secrets = block.input.subgroup_name
-                ? (g.subgroups?.[block.input.subgroup_name]?.secrets || [])
-                : (g.secrets || []);
-              result = { secrets };
-            } else if (block.name === "get_secret_value") {
-              const val = await svc.getSecretValue(block.input.secret_name, region);
-              try { result = { value: JSON.parse(val.secretValue) }; }
-              catch { result = { value: val.secretValue }; }
-            } else if (block.name === "update_secret_value") {
-              await svc.updateSecret(
-                block.input.secret_name,
-                JSON.stringify(block.input.new_value),
-                undefined,
-                region
-              );
-              result = { success: true };
-              send({ type: "updated", secret: block.input.secret_name });
-            }
-          } catch (e) {
-            result = { error: e.message };
-          }
-
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: JSON.stringify(result),
-          });
+        if (intent.action === "add" || intent.action === "update") {
+          obj[intent.key] = intent.value;
+        } else if (intent.action === "remove") {
+          delete obj[intent.key];
         }
 
-        messages.push({ role: "user", content: toolResults });
+        bak.backupSecret(secretName, val.secretValue, "chat");
+        send({ type: "tool_call", tool: "update_secret_value", input: { secret_name: secretName } });
+        await svc.updateSecret(secretName, JSON.stringify(obj), undefined, region);
+        send({ type: "updated", secret: secretName });
+        updated++;
+      } catch (e) {
+        send({ type: "error", text: `${secretName}: ${e.message}` });
       }
     }
+
+    const verb = intent.action === "remove" ? "removed" : "set";
+    const keyVal = intent.action === "remove" ? intent.key : `${intent.key}=${intent.value}`;
+    const target = intent.secret || `${intent.group}${intent.subgroup ? "/" + intent.subgroup : ""}`;
+    send({ type: "text", text: `Done — ${verb} ${keyVal} in ${updated} of ${secrets.length} secret(s) in ${target}.` });
+
   } catch (e) {
     send({ type: "error", text: e.message });
   }

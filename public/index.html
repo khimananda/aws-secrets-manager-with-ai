@@ -67,6 +67,15 @@
     .empty-state { text-align: center; padding: 60px 20px; color: #64748b; }
     .empty-state p { margin-top: 8px; }
 
+    /* Backups table */
+    .backup-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .backup-table th { text-align: left; padding: 8px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; border-bottom: 1px solid #334155; }
+    .backup-table td { padding: 8px 10px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+    .backup-table tr:hover td { background: #1e293b; }
+    .backup-source { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+    .backup-source.ui { background: #1e3a5f; color: #93c5fd; }
+    .backup-source.chat { background: #1a2e1a; color: #86efac; }
+
     /* AI Chat */
     .chat-fab { position: fixed; bottom: 28px; right: 28px; width: 52px; height: 52px; border-radius: 50%; background: #3b82f6; border: none; color: white; font-size: 22px; cursor: pointer; box-shadow: 0 4px 16px rgba(59,130,246,0.5); z-index: 300; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
     .chat-fab:hover { background: #2563eb; }
@@ -152,6 +161,7 @@
       <div class="toolbar">
         <button class="primary" onclick="showCreateSecretModal()">+ New Secret</button>
         <button onclick="showAddToGroupModal()" id="addToGroupBtn" style="display:none">Add to Group</button>
+        <button onclick="showBackupsModal()" style="margin-left:auto">🗄 Backups</button>
       </div>
       <table class="secrets-table">
         <thead>
@@ -279,6 +289,29 @@
       <div class="modal-actions">
         <button class="cancel" onclick="closeModal('editSecretModal')">Cancel</button>
         <button class="submit" onclick="updateSecret()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backups Modal -->
+  <div class="modal-overlay" id="backupsModal">
+    <div class="modal" style="width:620px">
+      <h3>Backups</h3>
+      <div id="backupsList" style="margin-top:12px;max-height:420px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('backupsModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backup View Modal -->
+  <div class="modal-overlay" id="backupViewModal">
+    <div class="modal" style="width:560px">
+      <h3 id="backupViewTitle">Backup</h3>
+      <div id="backupViewMeta" style="font-size:12px;color:#64748b;margin-bottom:8px"></div>
+      <div class="secret-value-display" id="backupViewContent"></div>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('backupViewModal')">Close</button>
       </div>
     </div>
   </div>
@@ -975,9 +1008,77 @@
       } catch (e) { toast(e.message, true); }
     }
 
+    // ── Backups ───────────────────────────────────────────────────────────────
+
+    async function showBackupsModal() {
+      const list = document.getElementById('backupsList');
+      list.textContent = 'Loading...';
+      showModal('backupsModal');
+      try {
+        const resp = await fetch(`${API}/api/backups`);
+        const backups = await resp.json();
+        list.replaceChildren();
+        if (backups.length === 0) {
+          const p = document.createElement('p');
+          p.style.color = '#64748b'; p.style.padding = '20px 0';
+          p.textContent = 'No backups yet. Backups are created automatically before any secret is modified.';
+          list.appendChild(p);
+          return;
+        }
+        const table = document.createElement('table');
+        table.className = 'backup-table';
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        ['Secret', 'Date', 'Time', 'Source', ''].forEach(h => {
+          const th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
+        });
+        thead.appendChild(hr); table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        for (const b of backups) {
+          const tr = document.createElement('tr');
+          const time = new Date(b.timestamp).toLocaleTimeString();
+          const srcSpan = document.createElement('span');
+          srcSpan.className = 'backup-source ' + (b.source || 'ui');
+          srcSpan.textContent = b.source || 'ui';
+          const viewBtn = createButton('View', () => viewBackup(b.date, b.file, b.secretName, b.timestamp));
+          viewBtn.style.fontSize = '12px';
+          [b.secretName, b.date, time, '', ''].forEach((val, i) => {
+            const td = document.createElement('td');
+            if (i === 3) td.appendChild(srcSpan);
+            else if (i === 4) td.appendChild(viewBtn);
+            else td.textContent = val;
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        list.appendChild(table);
+      } catch (e) { list.textContent = 'Error: ' + e.message; }
+    }
+
+    async function viewBackup(date, file, secretName, timestamp) {
+      document.getElementById('backupViewTitle').textContent = secretName;
+      document.getElementById('backupViewMeta').textContent =
+        'Backed up ' + new Date(timestamp).toLocaleString();
+      const content = document.getElementById('backupViewContent');
+      content.textContent = 'Loading...';
+      showModal('backupViewModal');
+      try {
+        const resp = await fetch(`${API}/api/backups/${encodeURIComponent(date)}/${encodeURIComponent(file)}`);
+        const data = await resp.json();
+        try {
+          const parsed = JSON.parse(data.value);
+          content.textContent = JSON.stringify(parsed, null, 2);
+        } catch {
+          content.textContent = data.value;
+        }
+      } catch (e) { content.textContent = 'Error: ' + e.message; }
+    }
+
     // ── AI Chat ──────────────────────────────────────────────────────────────
 
     let chatOpen = false;
+    let chatHistory = []; // [{role:"user"|"assistant", content:"..."}]
 
     function toggleChat() {
       chatOpen = !chatOpen;
@@ -1008,6 +1109,7 @@
       input.value = '';
       input.style.height = '38px';
       appendChatMsg('user', message);
+      chatHistory.push({ role: 'user', content: message });
 
       btn.disabled = true;
       const typing = appendChatMsg('chat-typing', '⋯ thinking');
@@ -1019,7 +1121,7 @@
         const resp = await fetch(`${API}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, region: getRegion() }),
+          body: JSON.stringify({ message, region: getRegion(), history: chatHistory.slice(-10) }),
         });
 
         const reader = resp.body.getReader();
@@ -1055,6 +1157,7 @@
               appendChatMsg('error-msg', '⚠ ' + evt.text);
             } else if (evt.type === 'done') {
               typing.remove();
+              if (assistantText) chatHistory.push({ role: 'assistant', content: assistantText });
               await loadGroups();
               await loadSecrets();
             }
