@@ -119,6 +119,24 @@
     .secret-search-list .opt-empty { padding: 10px 12px; font-size: 13px; color: #64748b; }
     .secret-chip { display: inline-flex; align-items: center; gap: 6px; background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 20px; padding: 4px 10px 4px 12px; font-size: 13px; color: #93c5fd; margin-top: 6px; }
     .secret-chip button { background: none; border: none; color: #64748b; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+
+    /* Key/Value search */
+    .kv-search-by { display: flex; gap: 8px; margin-bottom: 14px; }
+    .kv-search-by label { display: flex; align-items: center; gap: 5px; font-size: 13px; color: #94a3b8; cursor: pointer; }
+    .kv-search-by input[type="radio"] { accent-color: #3b82f6; cursor: pointer; }
+    .kv-results { margin-top: 16px; max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .kv-result-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; }
+    .kv-result-name { font-size: 14px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; }
+    .kv-result-groups { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+    .kv-match-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; font-family: monospace; margin-top: 4px; }
+    .kv-match-key { color: #7dd3fc; }
+    .kv-match-eq { color: #475569; }
+    .kv-match-val { color: #86efac; word-break: break-all; }
+    .kv-match-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; font-family: sans-serif; font-weight: 600; flex-shrink: 0; }
+    .kv-match-badge.key { background: #1e3a5f; color: #7dd3fc; }
+    .kv-match-badge.value { background: #052e16; color: #86efac; }
+    .kv-match-badge.both { background: #2d1b69; color: #c4b5fd; }
+    .kv-no-results { text-align: center; color: #64748b; font-size: 13px; padding: 20px 0; }
   </style>
 </head>
 <body>
@@ -161,6 +179,7 @@
       <div class="toolbar">
         <button class="primary" onclick="showCreateSecretModal()">+ New Secret</button>
         <button onclick="showAddToGroupModal()" id="addToGroupBtn" style="display:none">Add to Group</button>
+        <button onclick="showKvSearchModal()">⌕ Search by Key/Value</button>
         <button onclick="showBackupsModal()" style="margin-left:auto">🗄 Backups</button>
       </div>
       <table class="secrets-table">
@@ -312,6 +331,29 @@
       <div class="secret-value-display" id="backupViewContent"></div>
       <div class="modal-actions">
         <button class="cancel" onclick="closeModal('backupViewModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key/Value Search Modal -->
+  <div class="modal-overlay" id="kvSearchModal">
+    <div class="modal" style="width:620px">
+      <h3>Search by Key / Value</h3>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <input type="text" id="kvSearchInput" placeholder="e.g. DATABASE_URL or postgres://..."
+          style="flex:1;padding:8px 12px;border-radius:6px;border:1px solid #475569;background:#0f172a;color:#e2e8f0;font-size:14px"
+          onkeydown="if(event.key==='Enter') runKvSearch()">
+        <button onclick="runKvSearch()" style="padding:8px 18px;border-radius:6px;border:none;background:#3b82f6;color:white;cursor:pointer;font-size:14px;font-weight:500">Search</button>
+      </div>
+      <div class="kv-search-by" style="margin-top:12px">
+        <label><input type="radio" name="kvBy" value="both" checked> Key &amp; Value</label>
+        <label><input type="radio" name="kvBy" value="key"> Key only</label>
+        <label><input type="radio" name="kvBy" value="value"> Value only</label>
+      </div>
+      <div id="kvSearchStatus" style="font-size:12px;color:#64748b;min-height:18px"></div>
+      <div class="kv-results" id="kvResults"></div>
+      <div class="modal-actions">
+        <button class="cancel" onclick="closeModal('kvSearchModal')">Close</button>
       </div>
     </div>
   </div>
@@ -1006,6 +1048,95 @@
         await loadGroups();
         renderSecrets();
       } catch (e) { toast(e.message, true); }
+    }
+
+    // ── Key/Value Search ─────────────────────────────────────────────────────
+
+    function showKvSearchModal() {
+      document.getElementById('kvSearchInput').value = '';
+      document.getElementById('kvSearchStatus').textContent = '';
+      document.getElementById('kvResults').replaceChildren();
+      document.querySelectorAll('input[name="kvBy"]')[0].checked = true;
+      showModal('kvSearchModal');
+      document.getElementById('kvSearchInput').focus();
+    }
+
+    async function runKvSearch() {
+      const q = document.getElementById('kvSearchInput').value.trim();
+      if (!q) { document.getElementById('kvSearchStatus').textContent = 'Enter a search term.'; return; }
+      const by = document.querySelector('input[name="kvBy"]:checked').value;
+      const status = document.getElementById('kvSearchStatus');
+      const resultsEl = document.getElementById('kvResults');
+
+      status.textContent = 'Searching…';
+      resultsEl.replaceChildren();
+
+      try {
+        const resp = await fetch(`${API}/api/secrets/search?q=${encodeURIComponent(q)}&by=${by}&region=${encodeURIComponent(getRegion())}`);
+        const data = await resp.json();
+        if (data.error) { status.textContent = 'Error: ' + data.error; return; }
+
+        if (data.length === 0) {
+          status.textContent = 'No matches found.';
+          const empty = document.createElement('div');
+          empty.className = 'kv-no-results';
+          empty.textContent = 'No secrets contain a matching key or value.';
+          resultsEl.appendChild(empty);
+          return;
+        }
+
+        status.textContent = `Found ${data.length} secret${data.length !== 1 ? 's' : ''} with ${data.reduce((s, r) => s + r.matches.length, 0)} match${data.reduce((s, r) => s + r.matches.length, 0) !== 1 ? 'es' : ''}.`;
+
+        for (const result of data) {
+          const card = document.createElement('div');
+          card.className = 'kv-result-card';
+
+          const nameRow = document.createElement('div');
+          nameRow.className = 'kv-result-name';
+          nameRow.textContent = result.name;
+          card.appendChild(nameRow);
+
+          const groupRow = document.createElement('div');
+          groupRow.className = 'kv-result-groups';
+          groupRow.textContent = result.groups.length > 0 ? 'Groups: ' + result.groups.join(', ') : 'Ungrouped';
+          card.appendChild(groupRow);
+
+          for (const m of result.matches) {
+            const row = document.createElement('div');
+            row.className = 'kv-match-row';
+
+            const badge = document.createElement('span');
+            badge.className = 'kv-match-badge ' + m.matchedOn;
+            badge.textContent = m.matchedOn;
+
+            const key = document.createElement('span');
+            key.className = 'kv-match-key';
+            key.textContent = m.key;
+
+            const eq = document.createElement('span');
+            eq.className = 'kv-match-eq';
+            eq.textContent = '=';
+
+            const val = document.createElement('span');
+            val.className = 'kv-match-val';
+            val.textContent = String(m.value);
+
+            row.appendChild(badge);
+            row.appendChild(key);
+            row.appendChild(eq);
+            row.appendChild(val);
+            card.appendChild(row);
+          }
+
+          const editBtn = createButton('Edit Secret', () => { closeModal('kvSearchModal'); editSecret(result.name); });
+          editBtn.style.cssText = 'margin-top:10px;padding:5px 12px;border-radius:5px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-size:12px';
+          card.appendChild(editBtn);
+
+          resultsEl.appendChild(card);
+        }
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+      }
     }
 
     // ── Backups ───────────────────────────────────────────────────────────────

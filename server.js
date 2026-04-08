@@ -25,6 +25,64 @@ app.get("/api/secrets", async (req, res) => {
   }
 });
 
+app.get("/api/secrets/search", async (req, res) => {
+  try {
+    const { q, by = "both", region } = req.query;
+    if (!q) return res.status(400).json({ error: "q is required" });
+
+    const secrets = await svc.listSecrets(region, undefined, 1000);
+    const groups = svc.getGroups();
+
+    // Build secret → group membership map
+    const secretGroups = {};
+    for (const [gName, g] of Object.entries(groups)) {
+      for (const s of g.secrets) {
+        (secretGroups[s] = secretGroups[s] || []).push(gName);
+      }
+      for (const [subName, sub] of Object.entries(g.subgroups || {})) {
+        for (const s of sub.secrets) {
+          (secretGroups[s] = secretGroups[s] || []).push(`${gName}/${subName}`);
+        }
+      }
+    }
+
+    const qLower = q.toLowerCase();
+    const results = [];
+    const BATCH = 10;
+
+    for (let i = 0; i < secrets.length; i += BATCH) {
+      const batch = secrets.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(
+        batch.map(s => svc.getSecretValue(s.name, region))
+      );
+      for (let j = 0; j < batch.length; j++) {
+        const s = batch[j];
+        const r = settled[j];
+        if (r.status !== "fulfilled") continue;
+        let obj;
+        try { obj = JSON.parse(r.value.secretValue); } catch { continue; }
+        if (typeof obj !== "object" || obj === null) continue;
+
+        const matches = [];
+        for (const [k, v] of Object.entries(obj)) {
+          const matchKey = by !== "value" && k.toLowerCase().includes(qLower);
+          const matchVal = by !== "key" && String(v).toLowerCase().includes(qLower);
+          if (matchKey || matchVal) {
+            matches.push({ key: k, value: v, matchedOn: matchKey && matchVal ? "both" : matchKey ? "key" : "value" });
+          }
+        }
+        if (matches.length > 0) {
+          results.push({ name: s.name, description: s.description, groups: secretGroups[s.name] || [], matches });
+        }
+      }
+    }
+
+    res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/secrets/:name/value", async (req, res) => {
   try {
     const data = await svc.getSecretValue(req.params.name, req.query.region);
