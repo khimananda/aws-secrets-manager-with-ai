@@ -22,8 +22,8 @@ A web-based dashboard for managing AWS Secrets Manager secrets — with group or
 ## Setup
 
 ```bash
-git clone https://github.com/your-username/aws-secrets-manager-ui.git
-cd aws-secrets-manager-ui
+git clone https://github.com/your-username/aws-secrets-manager-with-ai.git
+cd aws-secrets-manager-with-ai
 
 npm install
 
