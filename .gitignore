@@ -1,4 +1,19 @@
+# Environment & secrets
 .env
+.env.*
+!.env.example
+
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Runtime data (contain real secret names/values)
 backup/
+data/groups.json
+
+# OS & editor
+.DS_Store
+.vscode/
+*.swp

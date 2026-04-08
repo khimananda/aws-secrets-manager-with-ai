@@ -12,7 +12,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GROUPS_FILE = path.join(__dirname, "data", "groups.json");
+const DATA_DIR = path.join(__dirname, "data");
+const GROUPS_FILE = path.join(DATA_DIR, "groups.json");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ── Groups (local persistence) ─────────────────────────────────────────────
 
